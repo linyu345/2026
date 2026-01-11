@@ -3,7 +3,7 @@ import re
 import requests
 
 # 输入输出文件（改为远程 GitHub Raw URL）
-INPUT_URL = "py/fofa/IPTV.txt"
+INPUT_URL = "https://raw.githubusercontent.com/linyu345/2026/main/py/fofa/IPTV.txt"
 OUTPUT_FILE = "py/fofa/IPTV.m3u"
 
 # 台标和 EPG（保持不变）
