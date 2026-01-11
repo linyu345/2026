@@ -47,17 +47,21 @@ jobs:
           python py/Hotel/generate_hotel_m3u.py || echo "M3U 生成出错，继续后续"
           echo "=== Finished generate_hotel_m3u.py ==="
 
-      - name: Pull latest changes (防止冲突)
+      - name: Pull latest changes (防冲突)
         run: |
           git fetch origin
           git pull origin main --no-rebase || echo "pull 失败，继续..."
 
-      - name: Check for changes & Commit/Push
+      - name: Commit and push changes
         run: |
-          # 添加所有可能变更的文件（包括 hotel.txt、已检测ip.txt、hotel.m3u）
-          git add py/Hotel/hotel.txt py/Hotel/已检测ip.txt hotel.m3u || true
+          set +e
 
-          # 调试：显示添加后状态
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 强制添加所有相关文件（用引号处理中文文件名）
+          git add "py/Hotel/hotel.txt" "py/Hotel/已检测ip.txt" hotel.m3u || true
+
           echo "Git status after add:"
           git status
 
@@ -66,7 +70,9 @@ jobs:
             echo "⚠️ 无实质变更，跳过提交"
           else
             git commit -m "自动更新 hotel.txt / 已检测ip.txt / hotel.m3u $(date '+%Y-%m-%d %H:%M:%S 北京时间')"
-            git push origin main || echo "推送失败（可能冲突或权限问题）"
+            git push origin HEAD:main || echo "推送失败（尝试强制）"
+            # 如果普通 push 失败，尝试带 lease 的强制
+            git push origin HEAD:main --force-with-lease || echo "强制推送也失败，请检查权限"
           fi
 
       - name: Display results
