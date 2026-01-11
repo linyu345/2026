@@ -1,8 +1,8 @@
-name: Hotel
+name: Hotel IPTV Collect & M3U Generate
 
 on:
   schedule:
-    - cron: "0 1,17 * * *"
+    - cron: "0 1,17 * * *"   # 每天凌晨1点和下午5点运行
   workflow_dispatch:
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # 升级到 v5，更稳定
         with:
           python-version: "3.11"
 
@@ -28,80 +28,69 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install aiohttp requests
-      
+
       - name: Configure Git
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git config pull.rebase false
-      
+
       - name: Run hotel.py
         run: |
           echo "=== Starting hotel.py ==="
-          python py/Hotel/hotel.py
+          python py/Hotel/hotel.py || echo "hotel.py 执行出错，继续后续步骤"
           echo "=== Finished hotel.py ==="
-      
-      - name: Check for changes
-        id: git-status
+
+      - name: Generate M3U with Logos
         run: |
-          # 检查是否有文件变更
-          changed_files=""
-          if git status --porcelain py/Hotel/ | grep -q .; then
-            echo "检测到变更"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "changed_files=$(git status --porcelain py/Hotel/ | grep -E '\.txt$' | wc -l)" >> $GITHUB_OUTPUT
-          else
-            echo "没有检测到变更"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Pull latest changes
-        if: steps.git-status.outputs.has_changes == 'true'
+          echo "=== Starting generate_hotel_m3u.py ==="
+          python py/Hotel/generate_hotel_m3u.py || echo "M3U 生成出错，继续后续"
+          echo "=== Finished generate_hotel_m3u.py ==="
+
+      - name: Pull latest changes (防止冲突)
         run: |
-          echo "拉取远程最新代码..."
           git fetch origin
-          git pull origin main --no-rebase || echo "拉取时遇到问题，继续执行..."
-      
-      - name: Commit and push
-        if: steps.git-status.outputs.has_changes == 'true'
+          git pull origin main --no-rebase || echo "pull 失败，继续..."
+
+      - name: Check for changes & Commit/Push
         run: |
-          echo "提交并推送变更..."
-          
-          # 添加所有变更的文件
-          git add py/Hotel/hotel.txt py/Hotel/已检测ip.txt
-          
-          # 提交
-          git commit -m "更新 hotel.txt 和 已检测ip.txt"
-          
-          # 推送
-          git push origin main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+          # 添加所有可能变更的文件（包括 hotel.txt、已检测ip.txt、hotel.m3u）
+          git add py/Hotel/hotel.txt py/Hotel/已检测ip.txt hotel.m3u || true
+
+          # 调试：显示添加后状态
+          echo "Git status after add:"
+          git status
+
+          git diff --cached --quiet
+          if [ $? -eq 0 ]; then
+            echo "⚠️ 无实质变更，跳过提交"
+          else
+            git commit -m "自动更新 hotel.txt / 已检测ip.txt / hotel.m3u $(date '+%Y-%m-%d %H:%M:%S 北京时间')"
+            git push origin main || echo "推送失败（可能冲突或权限问题）"
+          fi
+
       - name: Display results
         run: |
-          echo "=== 运行结果 ==="
+          echo "=== 运行结果总结 ==="
           if [ -f "py/Hotel/hotel.txt" ]; then
             hotel_lines=$(wc -l < py/Hotel/hotel.txt)
             echo "hotel.txt 行数: $hotel_lines"
           else
             echo "hotel.txt 未生成"
           fi
-          
+
           if [ -f "py/Hotel/已检测ip.txt" ]; then
             ip_lines=$(wc -l < py/Hotel/已检测ip.txt)
             echo "已检测ip.txt 行数: $ip_lines"
             echo "=== 前10个合格IP ==="
-            head -10 py/Hotel/已检测ip.txt
+            head -10 py/Hotel/已检测ip.txt || echo "文件为空"
           else
             echo "已检测ip.txt 未生成"
           fi
-          - name: Generate M3U with Logos
-            run: python py/Hotel/generate_hotel_m3u.py
 
-           - name: Commit M3U file
-            run: |
-              git add hotel.m3u
-              git diff --cached --quiet || git commit -m "自动生成带台标 hotel.m3u"
-              git push || true          
-          
+          if [ -f "hotel.m3u" ]; then
+            m3u_lines=$(wc -l < hotel.m3u)
+            echo "hotel.m3u 行数: $m3u_lines"
+          else
+            echo "hotel.m3u 未生成"
+          fi
