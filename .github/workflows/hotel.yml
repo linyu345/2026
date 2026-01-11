@@ -96,3 +96,12 @@ jobs:
           else
             echo "已检测ip.txt 未生成"
           fi
+          - name: Generate M3U with Logos
+            run: python py/Hotel/generate_hotel_m3u.py
+
+           - name: Commit M3U file
+            run: |
+              git add hotel.m3u
+              git diff --cached --quiet || git commit -m "自动生成带台标 hotel.m3u"
+              git push || true          
+          
