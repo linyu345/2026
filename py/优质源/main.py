@@ -581,6 +581,7 @@ def finalize_output(organized, group_order, channel_order):
             txt_lines.append(f"{group},#genre#")
 
             # 处理模板频道
+# 处理模板频道
             for channel in channel_order[group]:
                 if channel not in organized[ip_type][group]:
                     continue
@@ -588,32 +589,19 @@ def finalize_output(organized, group_order, channel_order):
                 # 合并所有协议的源，按速度排序
                 all_urls = organized[ip_type][group][channel]
                 urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
-                selected = [u[0] for u in urls[:10]]
-
-                # # 生成TXT格式：频道名,url1#url2#url3   (f"{channel},{url}")
-                # if selected:
-                #     txt_lines.append(f"{channel},{'#'.join(selected)}")
-                # # 每个URL单独一行
-                # for url in selected:
-                #     txt_lines.append(f"{channel},{url}")                
+                
                 selected = [u[0] for u in urls]  # 不再限制数量，因为已经通过阈值过滤
-                # 生成TXT格式：频道名,url1#url2#url3
+                # 生成TXT格式
                 for url in selected:
                     txt_lines.append(f"{channel},{url}")
-                    total_sources += len(selected)
-                    speed_stats.extend([u[1] for u in urls])
-                # # 生成TXT格式：频道名,url1#url2#url3
-                # if selected:
-                #     txt_lines.append(f"{channel},{'#'.join(selected)}")
-                #     total_sources += len(selected)
-                #     speed_stats.extend([u[1] for u in urls])
+                    total_sources += 1
                 
-                # 生成M3U格式：每个URL单独一行
+                # 记录速度统计数据
+                speed_stats.extend([u[1] for u in urls])
+                
+                # 生成M3U格式：仅保留频道名
                 for url, speed, protocol in urls:
-                    # 获取协议图标
-                    protocol_icon = "🔒" if protocol == "https" else "📹" if protocol in ['rtmp', 'rtmps'] else "🌐"
-                    
-                    m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{protocol_icon} {channel} | {speed:.1f}KB/s')
+                    m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{channel}')
                     m3u_lines.append(url)
 
             # 处理额外频道
@@ -624,18 +612,33 @@ def finalize_output(organized, group_order, channel_order):
             for channel in extra:
                 all_urls = organized[ip_type][group][channel]
                 urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
-                selected = [u[0] for u in urls]
                 
-                if selected:
-                    txt_lines.append(f"{channel},{'#'.join(selected)}")
-                    total_sources += len(selected)
-                    speed_stats.extend([u[1] for u in urls])
-                    
-                    for url, speed, protocol in urls:
-                        protocol_icon = "🔒" if protocol == "https" else "📹" if protocol in ['rtmp', 'rtmps'] else "🌐"
-                        
-                        m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{protocol_icon} {channel} | {speed:.1f}KB/s')
-                        m3u_lines.append(url)
+                for url in [u[0] for u in urls]:
+                    txt_lines.append(f"{channel},{url}")
+                    total_sources += 1
+                
+                speed_stats.extend([u[1] for u in urls])
+                
+                for url, speed, protocol in urls:
+                    m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{channel}')
+                    m3u_lines.append(url)
+
+        # 处理其他分组
+        if '其他' in organized[ip_type]:
+            txt_lines.append("其他,#genre#")
+            for channel in sorted(organized[ip_type]['其他'].keys(), key=lambda x: x.lower()):
+                all_urls = organized[ip_type]['其他'][channel]
+                urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
+                
+                for url in [u[0] for u in urls]:
+                    txt_lines.append(f"{channel},{url}")
+                    total_sources += 1
+                
+                speed_stats.extend([u[1] for u in urls])
+                
+                for url, speed, protocol in urls:
+                    m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="其他",{channel}')
+                    m3u_lines.append(url)
 
         # 处理其他分组
         if '其他' in organized[ip_type]:
