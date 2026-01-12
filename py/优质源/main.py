@@ -17,7 +17,7 @@ SUBSCRIBE_FILE = os.path.join(CONFIG_DIR, 'subscribe.txt')
 DEMO_FILE = os.path.join(CONFIG_DIR, 'demo.txt')
 LOCAL_FILE = os.path.join(CONFIG_DIR, 'local.txt')
 BLACKLIST_FILE = os.path.join(CONFIG_DIR, 'blacklist.txt')
-RUN_COUNT_FILE = os.path.join(CONFIG_DIR, 'run_count.txt')  # 新增运行次数记录文件
+RUN_COUNT_FILE = os.path.join(CONFIG_DIR, 'run_count.txt')
 
 OUTPUT_DIR = 'py/优质源/output'
 IPV4_DIR = os.path.join(OUTPUT_DIR, 'ipv4')
@@ -27,8 +27,8 @@ SPEED_LOG = os.path.join(OUTPUT_DIR, 'sort.log')
 SPEED_TEST_DURATION = 5
 MAX_WORKERS = 10
 HTTPS_VERIFY = False
-SPEED_THRESHOLD = 120  # 新增速度阈值120KB/s[6](@ref)
-RESET_COUNT = 12       # 新增运行12次后重置黑名单[7](@ref)
+SPEED_THRESHOLD = 120  
+RESET_COUNT = 12       
 
 # 全局变量
 failed_domains = set()
@@ -39,199 +39,119 @@ counter_lock = threading.Lock()
 os.makedirs(IPV4_DIR, exist_ok=True)
 os.makedirs(IPV6_DIR, exist_ok=True)
 
-
 # --------------------------
-# 新增运行次数管理函数
+# 工具函数
 # --------------------------
 def manage_run_count():
-    """管理运行次数并在第12次时清空黑名单[7](@ref)"""
     try:
-        # 读取当前运行次数
         if os.path.exists(RUN_COUNT_FILE):
             with open(RUN_COUNT_FILE, 'r') as f:
                 current_count = int(f.read().strip())
         else:
             current_count = 0
-        
-        # 增加运行次数
         current_count += 1
-        print(f"🔢 当前是第 {current_count} 次运行")
-        
-        # 检查是否需要清空黑名单[8](@ref)
         if current_count >= RESET_COUNT:
-            print("🔄 达到12次运行，清空黑名单文件")
             if os.path.exists(BLACKLIST_FILE):
                 with open(BLACKLIST_FILE, 'w') as f:
-                    f.write('')  # 清空文件内容
-                print("✅ 黑名单文件已清空")
-            current_count = 0  # 重置计数器
-        
-        # 保存更新后的运行次数
+                    f.write('')
+            current_count = 0
         with open(RUN_COUNT_FILE, 'w') as f:
             f.write(str(current_count))
-        
         return current_count
-        
     except Exception as e:
-        print(f"❌ 运行次数管理错误: {str(e)}")
         return 1
 
-
-# --------------------------
-# 工具函数
-# --------------------------
 def write_log(message):
-    """线程安全的日志写入"""
     with log_lock:
         with open(SPEED_LOG, 'a', encoding='utf-8') as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
 
-
 def get_domain(url):
-    """提取域名"""
     try:
         netloc = urlparse(url).netloc
         return netloc.split(':')[0] if ':' in netloc else netloc
     except:
         return None
 
-
 def update_blacklist(domain):
-    """更新黑名单"""
     if domain:
         with domain_lock:
             failed_domains.add(domain)
 
-
 def get_ip_type(url):
-    """安全获取IP类型"""
     try:
         host = urlparse(url).hostname
-        if not host:
-            return 'ipv4'
-
-        # 尝试解析IP地址类型
+        if not host: return 'ipv4'
         ip = ip_address(host)
         return 'ipv6' if isinstance(ip, IPv6Address) else 'ipv4'
-    except ValueError:
+    except:
         return 'ipv4'
-    except Exception as e:
-        print(f"⚠️ IP类型检测异常: {str(e)} ← {url}")
-        return 'ipv4'
-
 
 def get_protocol(url):
-    """获取URL的协议类型"""
     try:
         return urlparse(url).scheme.lower()
     except:
         return 'unknown'
 
-
 def test_https_certificate(domain, port=443):
-    """测试HTTPS证书有效性"""
     try:
         context = ssl.create_default_context()
         with socket.create_connection((domain, port), timeout=5) as sock:
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert()
-                # 检查证书有效期
-                not_after = cert.get('notAfter', '')
-                if not_after:
-                    # 简单验证证书是否在有效期内
-                    return True, "证书有效"
-                return True, "证书信息获取成功"
-    except ssl.SSLError as e:
-        return False, f"SSL错误: {str(e)}"
-    except Exception as e:
-        return False, f"证书检查失败: {str(e)}"
-    return False, "未知错误"
-
+                return True, "Success"
+    except:
+        return False, "Failed"
 
 # --------------------------
 # 核心逻辑
 # --------------------------
 def parse_demo_file():
-    """解析频道模板文件"""
-    print("\n🔍 解析频道模板文件...")
-    alias_map = {}
-    group_map = {}
-    group_order = []
+    alias_map, group_map, group_order = {}, {}, []
     channel_order = OrderedDict()
     current_group = None
-
     try:
         with open(DEMO_FILE, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
+            for line in f:
                 line = line.strip()
-                if not line:
-                    continue
-
+                if not line: continue
                 if line.endswith(',#genre#'):
                     current_group = line.split(',', 1)[0]
                     group_order.append(current_group)
                     channel_order[current_group] = []
-                    print(f"  发现分组 [{current_group}]")
-                elif current_group and line:
+                elif current_group:
                     parts = [p.strip() for p in line.split('|')]
-                    standard_name = parts[0]
-                    channel_order[current_group].append(standard_name)
-
-                    for alias in parts:
-                        alias_map[alias] = standard_name
-                    group_map[standard_name] = current_group
-
-        print(f"✅ 发现 {len(group_order)} 个分组，{len(alias_map)} 个别名")
+                    std_name = parts[0]
+                    channel_order[current_group].append(std_name)
+                    for alias in parts: alias_map[alias] = std_name
+                    group_map[std_name] = current_group
         return alias_map, group_map, group_order, channel_order
-
-    except Exception as e:
-        print(f"❌ 模板解析失败: {str(e)}")
+    except:
         return {}, {}, [], OrderedDict()
 
-
 def fetch_sources():
-    """获取订阅源数据"""
-    print("\n🔍 获取订阅源...")
     sources = []
-
     try:
         with open(SUBSCRIBE_FILE, 'r') as f:
             urls = [line.strip() for line in f if line.strip()]
-
-        print(f"  发现 {len(urls)} 个订阅地址")
-        for idx, url in enumerate(urls, 1):
+        for url in urls:
             try:
-                print(f"\n🌐 正在获取源 ({idx}/{len(urls)})：{url}")
                 response = requests.get(url, timeout=15, verify=HTTPS_VERIFY)
                 content = response.text
-
-                if '#EXTM3U' in content or url.endswith('.m3u'):
-                    parsed = parse_m3u(content)
-                    print(f"  解析到 {len(parsed)} 个M3U源")
-                    sources.extend(parsed)
+                if '#EXTM3U' in content:
+                    sources.extend(parse_m3u(content))
                 else:
-                    parsed = parse_txt(content)
-                    print(f"  解析到 {len(parsed)} 个TXT源")
-                    sources.extend(parsed)
-
-            except Exception as e:
-                print(f"❌ 下载失败: {str(e)}")
-
-    except FileNotFoundError:
-        print("⚠️ 订阅文件不存在")
-
+                    sources.extend(parse_txt(content))
+            except: pass
+    except: pass
     return sources
 
-
 def parse_m3u(content):
-    """解析M3U格式内容"""
-    channels = []
-    current = {}
+    channels, current = [], {}
     for line in content.split('\n'):
         line = line.strip()
         if line.startswith('#EXTINF'):
             match = re.search(r'tvg-name="([^"]*)"', line)
-            current = {'name': match.group(1) if match else '未知频道', 'urls': []}
+            current = {'name': match.group(1) if match else '未知', 'urls': []}
         elif line and not line.startswith('#'):
             if current:
                 current['urls'].append(line)
@@ -239,503 +159,164 @@ def parse_m3u(content):
                 current = {}
     return [{'name': c['name'], 'url': u} for c in channels for u in c['urls']]
 
-
 def parse_txt(content):
-    """解析TXT格式内容"""
     channels = []
     for line in content.split('\n'):
         line = line.strip()
         if ',' in line:
-            try:
-                name, urls = line.split(',', 1)
-                for url in urls.split('#'):
-                    clean_url = url.split('$')[0].strip()
-                    if clean_url:
-                        channels.append({'name': name.strip(), 'url': clean_url})
-            except Exception as e:
-                print(f"❌ 解析失败: {str(e)} ← {line}")
+            name, urls = line.split(',', 1)
+            for url in urls.split('#'):
+                clean_url = url.split('$')[0].strip()
+                if clean_url: channels.append({'name': name.strip(), 'url': clean_url})
     return channels
 
-
 def parse_local():
-    """解析本地源文件"""
-    print("\n🔍 解析本地源...")
     sources = []
     try:
         with open(LOCAL_FILE, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if ',' in line:
-                    try:
-                        name, urls = line.split(',', 1)
-                        for url in urls.split('#'):
-                            parts = url.split('$', 1)
-                            source = {
-                                'name': name.strip(),
-                                'url': parts[0].strip(),
-                                'whitelist': len(parts) > 1
-                            }
-                            sources.append(source)
-                    except Exception as e:
-                        print(f"❌ 解析失败: {str(e)} ← {line}")
-        print(f"✅ 找到 {len(sources)} 个本地源")
-    except FileNotFoundError:
-        print("⚠️ 本地源文件不存在")
+                    name, urls = line.split(',', 1)
+                    for url in urls.split('#'):
+                        parts = url.split('$', 1)
+                        sources.append({'name': name.strip(), 'url': parts[0].strip(), 'whitelist': len(parts)>1})
+    except: pass
     return sources
 
-
 def read_blacklist():
-    """读取黑名单列表"""
     try:
         with open(BLACKLIST_FILE, 'r') as f:
             return [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        return []
-
+    except: return []
 
 def filter_sources(sources, blacklist):
-    """过滤黑名单源"""
-    print("\n🔍 过滤黑名单...")
-    filtered = []
-    blacklist_lower = [kw.lower() for kw in blacklist]
-
+    filtered, bl_lower = [], [kw.lower() for kw in blacklist]
     for s in sources:
-        # URL格式校验
-        if not urlparse(s['url']).scheme:
-            print(f"🚫 无效URL格式: {s['url']}")
-            continue
-
-        if s.get('whitelist', False):
+        if not urlparse(s['url']).scheme: continue
+        if s.get('whitelist', False): 
             filtered.append(s)
             continue
-
-        if any(kw in s['url'].lower() for kw in blacklist_lower):
-            print(f"🚫 拦截黑名单: {s['url']}")
-            continue
-
+        if any(kw in s['url'].lower() for kw in bl_lower): continue
         filtered.append(s)
-
-    print(f"✅ 保留 {len(filtered)}/{len(sources)} 个源")
     return filtered
 
-
-def test_rtmp(url):
-    """RTMP推流检测"""
-    try:
-        result = subprocess.run(
-            ['ffmpeg', '-i', url, '-t', '1', '-v', 'error', '-f', 'null', '-'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=10
-        )
-        if result.returncode == 0:
-            write_log(f"RTMP检测成功: {url}")
-            return 100
-        write_log(f"RTMP检测失败: {url} | {result.stderr.decode()[:100]}")
-        return 0
-    except Exception as e:
-        write_log(f"RTMP检测异常: {url} | {str(e)}")
-        return 0
-
-
-def test_https_specific(url, domain):
-    """HTTPS协议特殊检测"""
-    try:
-        # 测试证书有效性
-        cert_valid, cert_msg = test_https_certificate(domain)
-        
-        # 进行常规速度测试
-        start_time = time.time()
-        with requests.Session() as session:
-            response = session.get(url,
-                                   stream=True,
-                                   timeout=(3.05, 5),
-                                   allow_redirects=True,
-                                   verify=HTTPS_VERIFY,
-                                   headers={'User-Agent': 'Mozilla/5.0'})
-
-            total_bytes = 0
-            data_start = time.time()
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    total_bytes += len(chunk)
-                if (time.time() - data_start) >= SPEED_TEST_DURATION:
-                    break
-
-            duration = max(time.time() - data_start, 0.001)
-            speed = (total_bytes / 1024) / duration
-            
-            # 记录HTTPS特定信息
-            https_info = f" | 证书: {'有效' if cert_valid else '无效'}"
-            log_msg = (f"✅ HTTPS测速成功: {url}\n"
-                       f"   速度: {speed:.2f}KB/s | 数据量: {total_bytes / 1024:.1f}KB | "
-                       f"总耗时: {time.time() - start_time:.2f}s{https_info}")
-            write_log(log_msg)
-            return speed
-            
-    except requests.exceptions.SSLError as e:
-        log_msg = f"❌ HTTPS SSL错误: {url} | 错误: {str(e)}"
-        write_log(log_msg)
-        return 0
-    except Exception as e:
-        domain = get_domain(url)
-        update_blacklist(domain)
-        log_msg = f"❌ HTTPS测速失败: {url} | 错误: {str(e)}"
-        write_log(log_msg)
-        return 0
-
-
 def test_speed(url):
-    """增强版测速函数，支持HTTPS检测"""
     try:
         protocol = get_protocol(url)
-        
-        # RTMP协议处理
         if protocol in ['rtmp', 'rtmps']:
-            return test_rtmp(url)
-
-        # HTTPS协议特殊处理
-        if protocol == 'https':
-            domain = get_domain(url)
-            if domain:
-                return test_https_specific(url, domain)
-            else:
-                write_log(f"⚠️ 无法提取HTTPS域名: {url}")
-                return 0
-
-        # HTTP协议处理
-        if protocol not in ['http', 'https']:
-            write_log(f"⚠️ 跳过非常规协议: {url}")
-            return 0
-
-        # 普通HTTP请求
-        start_time = time.time()
+            result = subprocess.run(['ffmpeg', '-i', url, '-t', '1', '-v', 'error', '-f', 'null', '-'], timeout=10)
+            return 100 if result.returncode == 0 else 0
+        
         with requests.Session() as session:
-            response = session.get(url,
-                                   stream=True,
-                                   timeout=(3.05, 5),
-                                   allow_redirects=True,
-                                   verify=False,
-                                   headers={'User-Agent': 'Mozilla/5.0'})
-
-            total_bytes = 0
-            data_start = time.time()
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    total_bytes += len(chunk)
-                if (time.time() - data_start) >= SPEED_TEST_DURATION:
-                    break
-
+            response = session.get(url, stream=True, timeout=(3, 5), verify=False)
+            total_bytes, data_start = 0, time.time()
+            for chunk in response.iter_content(chunk_size=1024*1024):
+                if chunk: total_bytes += len(chunk)
+                if (time.time() - data_start) >= SPEED_TEST_DURATION: break
             duration = max(time.time() - data_start, 0.001)
-            speed = (total_bytes / 1024) / duration
-            
-            # 新增速度阈值检查[6](@ref)
-            if speed > SPEED_THRESHOLD:
-                status = "✅ 通过阈值"
-            else:
-                status = "🚫 未达阈值"
-                
-            log_msg = (f"{status} {protocol.upper()}测速: {url}\n"
-                       f"   速度: {speed:.2f}KB/s | 数据量: {total_bytes / 1024:.1f}KB | "
-                       f"总耗时: {time.time() - start_time:.2f}s | 阈值: {SPEED_THRESHOLD}KB/s")
-            write_log(log_msg)
-            return speed
-
-    except Exception as e:
-        domain = get_domain(url)
-        update_blacklist(domain)
-        protocol = get_protocol(url)
-        log_msg = (f"❌ {protocol.upper()}测速失败: {url}\n"
-                   f"   错误: {str(e)} | 域名: {domain}")
-        write_log(log_msg)
+            return (total_bytes / 1024) / duration
+    except:
+        update_blacklist(get_domain(url))
         return 0
-
 
 def process_sources(sources):
-    """处理所有源并进行测速，应用速度阈值过滤[6](@ref)"""
-    total = len(sources)
-    print(f"\n🔍 开始检测 {total} 个源")
-    print(f"📊 速度阈值: {SPEED_THRESHOLD}KB/s")
-    
     processed = []
-    processed_count = 0
-    passed_count = 0  # 通过阈值计数
-
-    # 统计协议类型
-    protocol_stats = {}
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {}
-        for s in sources:
-            future = executor.submit(
-                lambda s: (s['name'], s['url'], test_speed(s['url']), 
-                          get_ip_type(s['url']), get_protocol(s['url'])), s)
-            futures[future] = s
-
+        futures = {executor.submit(lambda s: (s['name'], s['url'], test_speed(s['url']), get_ip_type(s['url']), get_protocol(s['url'])), s): s for s in sources}
         for future in concurrent.futures.as_completed(futures):
             try:
                 name, url, speed, ip_type, protocol = future.result()
-                with counter_lock:
-                    processed_count += 1
-                    progress = f"[{processed_count}/{total}]"
-
-                    # 更新协议统计
-                    if protocol not in protocol_stats:
-                        protocol_stats[protocol] = {'total': 0, 'passed': 0}
-                    protocol_stats[protocol]['total'] += 1
-
-                speed_str = f"{speed:>7.2f}KB/s".rjust(12)
-                protocol_icon = "🔒" if protocol == "https" else "🌐"
-                if protocol in ['rtmp', 'rtmps']:
-                    protocol_icon = "📹"
-                
-                # 应用速度阈值过滤[6](@ref)
                 if speed > SPEED_THRESHOLD:
-                    status = "✅"
-                    passed_count += 1
-                    protocol_stats[protocol]['passed'] += 1
                     processed.append((name, url, speed, ip_type, protocol))
-                else:
-                    status = "❌"
-                
-                print(f"{progress} {status} 频道: {name[:15]:<15} | 速度:{speed_str} | {protocol_icon}{protocol.upper()} | {url}")
-                
-            except Exception as e:
-                print(f"⚠️ 处理异常: {str(e)}")
-
-    # 打印统计信息
-    print(f"\n📊 速度阈值过滤结果:")
-    print(f"   📡 总检测数: {processed_count}")
-    print(f"   ✅ 通过数: {passed_count} (速度 > {SPEED_THRESHOLD}KB/s)")
-    print(f"   ❌ 淘汰数: {processed_count - passed_count} (速度 ≤ {SPEED_THRESHOLD}KB/s)")
-    print(f"   📈 通过率: {passed_count/max(processed_count,1)*100:.1f}%")
+            except: pass
     
-    print(f"📊 协议分布:")
-    for protocol, data in protocol_stats.items():
-        icon = "🔒" if protocol == "https" else ("📹" if protocol in ['rtmp', 'rtmps'] else "🌐")
-        passed = data['passed']
-        total = data['total']
-        pass_rate = passed/max(total,1)*100
-        print(f"   {icon} {protocol.upper():<6}: {passed}/{total} 通过 ({pass_rate:.1f}%)")
-
-    # 保存黑名单更新
     if failed_domains:
-        existing = set()
-        if os.path.exists(BLACKLIST_FILE):
-            with open(BLACKLIST_FILE, 'r') as f:
-                existing = set(line.strip() for line in f)
-
-        new_domains = failed_domains - existing
-        if new_domains:
-            with open(BLACKLIST_FILE, 'a') as f:
-                for domain in new_domains:
-                    f.write(f"{domain}\n")
-            print(f"🆕 新增 {len(new_domains)} 个域名到黑名单")
-
-    print("\n✅ 全部源检测完成")
+        with open(BLACKLIST_FILE, 'a') as f:
+            for d in failed_domains: f.write(f"{d}\n")
     return processed
 
-
 def organize_channels(processed, alias_map, group_map):
-    """整理频道数据"""
-    print("\n📚 整理频道数据...")
     organized = {'ipv4': OrderedDict(), 'ipv6': OrderedDict()}
-
     for name, url, speed, ip_type, protocol in processed:
-        if ip_type not in ('ipv4', 'ipv6'):
-            print(f"⚠️ 异常IP类型: {ip_type}，使用ipv4代替 ← {url}")
-            ip_type = 'ipv4'
-
         std_name = alias_map.get(name, name)
         group = group_map.get(std_name, '其他')
-
-        if group not in organized[ip_type]:
-            organized[ip_type][group] = OrderedDict()
-        if std_name not in organized[ip_type][group]:
-            organized[ip_type][group][std_name] = []
-
+        if group not in organized[ip_type]: organized[ip_type][group] = OrderedDict()
+        if std_name not in organized[ip_type][group]: organized[ip_type][group][std_name] = []
         organized[ip_type][group][std_name].append((url, speed, protocol))
-
     return organized
 
-
+# --------------------------
+# 修改后的生成结果文件函数
+# --------------------------
 def finalize_output(organized, group_order, channel_order):
-    """生成输出文件 - 合并所有协议到单一文件"""
-    print("\n📂 生成结果文件...")
+    print("\n📂 正在生成纯净版结果文件...")
     
     for ip_type in ['ipv4', 'ipv6']:
         txt_lines = []
-        m3u_lines = [
-            '#EXTM3U x-tvg-url="https://gh.catmak.name/https://raw.githubusercontent.com/Guovin/iptv-api/refs/heads/master/output/epg/epg.gz"',
-        ]
-
-        # 统计信息
+        m3u_lines = ['#EXTM3U x-tvg-url="https://gh.catmak.name/https://raw.githubusercontent.com/Guovin/iptv-api/refs/heads/master/output/epg/epg.gz"']
         total_sources = 0
         speed_stats = []
 
-        # 按模板顺序处理分组
+        # 1. 按模板顺序处理分组
         for group in group_order:
-            if group not in organized[ip_type]:
-                continue
-
+            if group not in organized[ip_type]: continue
             txt_lines.append(f"{group},#genre#")
 
-            # 处理模板频道
-# 处理模板频道
             for channel in channel_order[group]:
-                if channel not in organized[ip_type][group]:
-                    continue
-
-                # 合并所有协议的源，按速度排序
-                all_urls = organized[ip_type][group][channel]
-                urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
+                if channel not in organized[ip_type][group]: continue
                 
-                selected = [u[0] for u in urls]  # 不再限制数量，因为已经通过阈值过滤
-                # 生成TXT格式
-                for url in selected:
-                    txt_lines.append(f"{channel},{url}")
-                    total_sources += 1
+                # 获取并排序源
+                urls = sorted(organized[ip_type][group][channel], key=lambda x: x[1], reverse=True)
                 
-                # 记录速度统计数据
-                speed_stats.extend([u[1] for u in urls])
-                
-                # 生成M3U格式：仅保留频道名
+                # 生成 TXT 与 M3U
                 for url, speed, protocol in urls:
+                    txt_lines.append(f"{channel},{url}")
+                    # M3U 仅保留频道名，去掉图标变量、速度和竖线
                     m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{channel}')
                     m3u_lines.append(url)
+                    total_sources += 1
+                    speed_stats.append(speed)
 
-            # 处理额外频道
-            extra = sorted(
-                [c for c in organized[ip_type][group] if c not in channel_order[group]],
-                key=lambda x: x.lower()
-            )
+            # 2. 处理该分组下不在模板里的额外频道
+            extra = sorted([c for c in organized[ip_type][group] if c not in channel_order[group]], key=lambda x: x.lower())
             for channel in extra:
-                all_urls = organized[ip_type][group][channel]
-                urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
-                
-                for url in [u[0] for u in urls]:
-                    txt_lines.append(f"{channel},{url}")
-                    total_sources += 1
-                
-                speed_stats.extend([u[1] for u in urls])
-                
+                urls = sorted(organized[ip_type][group][channel], key=lambda x: x[1], reverse=True)
                 for url, speed, protocol in urls:
+                    txt_lines.append(f"{channel},{url}")
                     m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="{group}",{channel}')
                     m3u_lines.append(url)
+                    total_sources += 1
+                    speed_stats.append(speed)
 
-        # 处理其他分组
+        # 3. 处理“其他”分组
         if '其他' in organized[ip_type]:
             txt_lines.append("其他,#genre#")
             for channel in sorted(organized[ip_type]['其他'].keys(), key=lambda x: x.lower()):
-                all_urls = organized[ip_type]['其他'][channel]
-                urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
-                
-                for url in [u[0] for u in urls]:
-                    txt_lines.append(f"{channel},{url}")
-                    total_sources += 1
-                
-                speed_stats.extend([u[1] for u in urls])
-                
+                urls = sorted(organized[ip_type]['其他'][channel], key=lambda x: x[1], reverse=True)
                 for url, speed, protocol in urls:
+                    txt_lines.append(f"{channel},{url}")
                     m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="其他",{channel}')
                     m3u_lines.append(url)
-
-        # 处理其他分组
-        if '其他' in organized[ip_type]:
-            txt_lines.append("其他,#genre#")
-            for channel in sorted(organized[ip_type]['其他'].keys(), key=lambda x: x.lower()):
-                all_urls = organized[ip_type]['其他'][channel]
-                urls = sorted(all_urls, key=lambda x: x[1], reverse=True)
-                selected = [u[0] for u in urls]
-                
-                if selected:
-                    txt_lines.append(f"{channel},{'#'.join(selected)}")
-                    total_sources += len(selected)
-                    speed_stats.extend([u[1] for u in urls])
-                    
-                    for url, speed, protocol in urls:
-                        protocol_icon = "🔒" if protocol == "https" else "📹" if protocol in ['rtmp', 'rtmps'] else "🌐"
-                        
-                        m3u_lines.append(f'#EXTINF:-1 tvg-name="{channel}" tvg-logo="https://gh.catmak.name/https://raw.githubusercontent.com/fanmingming/live/main/tv/{channel}.png" group-title="其他",{protocol_icon} {channel} | {speed:.1f}KB/s')
-                        m3u_lines.append(url)
+                    total_sources += 1
+                    speed_stats.append(speed)
 
         # 写入文件
         dir_path = IPV4_DIR if ip_type == 'ipv4' else IPV6_DIR
-        
-        # 只生成两个文件：result.txt 和 result.m3u
         with open(os.path.join(dir_path, 'result.txt'), 'w', encoding='utf-8') as f:
             f.write('\n'.join(txt_lines))
         with open(os.path.join(dir_path, 'result.m3u'), 'w', encoding='utf-8') as f:
             f.write('\n'.join(m3u_lines))
 
-        # 计算统计信息
-        if speed_stats:
-            avg_speed = sum(speed_stats) / len(speed_stats)
-            max_speed = max(speed_stats)
-            min_speed = min(speed_stats)
-        else:
-            avg_speed = max_speed = min_speed = 0
-
-        print(f"✅ 已生成 {ip_type.upper()} 文件:")
-        print(f"   📄 {os.path.join(dir_path, 'result.txt')}")
-        print(f"   📺 {os.path.join(dir_path, 'result.m3u')}")
-        print(f"   📊 统计: {total_sources} 个源 | 平均速度: {avg_speed:.1f}KB/s")
-        print(f"   📈 速度范围: {min_speed:.1f} - {max_speed:.1f}KB/s")
-        
-        # 统计协议信息
-        protocol_count = {}
-        for group in organized[ip_type]:
-            for channel in organized[ip_type][group]:
-                for url, speed, protocol in organized[ip_type][group][channel]:
-                    if protocol not in protocol_count:
-                        protocol_count[protocol] = 0
-                    protocol_count[protocol] += 1
-        
-        if protocol_count:
-            print(f"   🌐 协议分布: {', '.join([f'{p.upper()}:{c}' for p, c in protocol_count.items()])}")
-
+        print(f"✅ {ip_type.upper()} 生成完毕，共 {total_sources} 个源")
 
 if __name__ == '__main__':
-    print("\n" + "=" * 60)
-    print("🎬 IPTV直播源处理脚本（增强版）")
-    print("=" * 60)
-    
-    # 新增运行次数管理[7](@ref)
     run_count = manage_run_count()
-    
-    print(f"🔧 配置参数:")
-    print(f"   📊 速度阈值: {SPEED_THRESHOLD}KB/s")
-    print(f"   🔢 运行次数: {run_count}/{RESET_COUNT}")
-    print(f"   🔐 HTTPS证书验证: {'开启' if HTTPS_VERIFY else '关闭'}")
-    print(f"   ⏱️ 测速时长: {SPEED_TEST_DURATION}秒")
-    print(f"   👥 最大并发数: {MAX_WORKERS}")
-    print(f"   📁 输出文件: result.txt, result.m3u")
-
-    # 初始化日志文件
-    with open(SPEED_LOG, 'w', encoding='utf-8') as f:
-        f.write(f"测速日志 {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"速度阈值: {SPEED_THRESHOLD}KB/s\n")
-        f.write(f"运行次数: {run_count}\n")
-        f.write(f"HTTPS验证: {HTTPS_VERIFY}\n\n")
-
-    # 初始化数据
     alias_map, group_map, group_order, channel_order = parse_demo_file()
     sources = fetch_sources() + parse_local()
     blacklist = read_blacklist()
-
-    # 处理流程
     filtered = filter_sources(sources, blacklist)
     processed = process_sources(filtered)
     organized = organize_channels(processed, alias_map, group_map)
     finalize_output(organized, group_order, channel_order)
-
-    print("\n" + "=" * 60)
-    print("🎉 处理完成！")
-    print(f"🔢 本次运行次数: {run_count}")
-    if run_count >= RESET_COUNT - 1:
-        print(f"⚠️ 下次运行将清空黑名单")
-    print("📁 结果文件:")
-    print(f"   IPv4: {IPV4_DIR}/result.txt, result.m3u")
-    print(f"   IPv6: {IPV6_DIR}/result.txt, result.m3u")
-    print("🔍 所有协议源已合并到同一文件中")
-    print("=" * 60)
+    print(f"🎉 处理完成！当前运行次数: {run_count}")
