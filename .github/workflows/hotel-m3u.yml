@@ -21,7 +21,7 @@ jobs:
         run: pip install requests
 
       - name: Run generate script
-        run: python generate_hotel_m3u.py   # 请确保脚本文件名正确
+        run: python hotel_m3u.py   # 请确保脚本文件名正确
 
       - name: Commit and push if changed
         run: |
