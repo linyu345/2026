@@ -1,23 +1,24 @@
-
 name: FOFA IP
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch:          # 手动触发
+    - cron: "*/60 * * * *"
+  workflow_dispatch:
 
 jobs:
   fetch-and-push:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # 升级到 v4，更稳定
         with:
-          persist-credentials: true
+          ref: main
+          fetch-depth: 0           # 拉取完整历史，方便 rebase/pull
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -30,14 +31,36 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Run fofa_fetch.py
-        run:  python py/fofa/fofa_fetch.py
+        run: python py/fofa/fofa_fetch.py
+
+      - name: Pull latest changes (防止冲突)
+        run: |
+          git fetch origin
+          git pull origin main --rebase || git pull origin main --no-rebase || echo "pull 失败，继续尝试提交"
 
       - name: Commit and push changes
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 强制 add 所有可能变动的文件（包括 zubo.txt）
           git add py/fofa/计数.txt
           git add py/fofa/ip/*.txt || true
           git add py/fofa/IPTV.txt || true
-          git commit -m "自动更新：计数、IP文件、IPTV.txt" || echo "⚠️ 无需提交"
-          git push origin main || echo "⚠️ 推送失败"
+          git add py/fofa/zubo.txt || true   # ← 新增这一行！解决 untracked 问题
+
+          # 检查是否有变更
+          git status
+
+          git diff --cached --quiet
+          if [ $? -eq 0 ]; then
+            echo "⚠️ 无实质变更，跳过提交"
+          else
+            git commit -m "自动更新：计数、IP文件、zubo.txt、IPTV.txt $(date '+%Y-%m-%d %H:%M:%S 北京时间')"
+            # 先尝试普通 push
+            git push origin HEAD:main || {
+              echo "普通 push 失败，尝试 pull + rebase 后再 push"
+              git pull origin main --rebase
+              git push origin HEAD:main || echo "⚠️ 最终推送失败，请检查"
+            }
+          fi
