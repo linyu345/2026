@@ -2,7 +2,7 @@ name: FOFA IP
 
 on:
   schedule:
-    - cron: "*/6 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
