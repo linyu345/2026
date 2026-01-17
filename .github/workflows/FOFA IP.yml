@@ -2,7 +2,7 @@ name: FOFA IP Update
 
 on:
   schedule:
-    - cron: "0 */2 * * *"          # 每 30 分钟运行一次
+    - cron: "0 */2 * * *"          # 每 2 小时运行一次
   workflow_dispatch:                # 支持手动触发
 
 jobs:
@@ -16,12 +16,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0            # 完整历史，便于 rebase/pull
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # --- 如果你以后要跑那个 PHP 扫描脚本，可以保留这一步 ---
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
 
       - name: Install dependencies
         run: |
@@ -34,6 +40,12 @@ jobs:
       - name: Run fofa_fetch.py
         run: python py/fofa/fofa_fetch.py
 
+      # --- 新增步骤：同步生成 M3U 文件 ---
+      - name: Run txt_to_m3u.py
+        run: |
+          echo "=== 正在转换 IPTV.txt 为 IPTV.m3u ==="
+          python py/fofa/txt_to_m3u.py || echo "转换脚本执行失败"
+
       - name: Pull latest changes (防冲突)
         run: |
           git fetch origin
@@ -44,57 +56,31 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # ★ 关键：主动删除 zubo.txt 并从 git 索引移除（防止它被 add）
+          # 主动清理不需要的文件
           rm -f py/fofa/zubo.txt || true
           git rm --cached py/fofa/zubo.txt || true
 
-          # 只添加真正需要的文件
-          git add py/fofa/计数.txt          || true
+          # ★ 关键：添加所有生成的文件，包括新的 IPTV.m3u
+          git add py/fofa/计数.txt           || true
           git add py/fofa/ip/*.txt           || true
           git add py/fofa/IPTV.txt           || true
+          git add py/fofa/IPTV.m3u           || true
 
-          # 调试输出：查看实际变更状态
           echo "=== 当前 git status ==="
           git status --short
 
-          # 检查是否有待提交的变更
           if git diff --cached --quiet; then
             echo "⚠️ 没有实质变更，跳过 commit & push"
             exit 0
           fi
 
-          # 生成 commit message（使用 UTC 时间，避免时区问题）
-          COMMIT_MSG="自动更新：计数、IP文件、IPTV.txt - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-
-          echo "准备 commit: $COMMIT_MSG"
-
-          # 执行 commit
-          git commit -m "$COMMIT_MSG" || {
-            echo "❌ commit 失败！打印错误信息："
-            git commit -m "$COMMIT_MSG" 2>&1   # 再次执行显示详细错误
-            exit 1
-          }
-
-          echo "commit 成功，开始 push"
-
-          # push 前再一次 fetch + pull rebase
-          git fetch origin
-          git pull origin main --rebase || echo "rebase 失败，继续尝试 push"
-
-          # 尝试 push
-          git push origin HEAD:main || {
-            echo "普通 push 失败，尝试第二次 pull + push"
-            git pull origin main --rebase
-            git push origin HEAD:main || echo "⚠️ 最终推送失败，请检查仓库权限或冲突"
-          }
+          COMMIT_MSG="自动更新：IPTV.txt & IPTV.m3u - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          git commit -m "$COMMIT_MSG"
+          git push origin HEAD:main --force-with-lease || echo "推送失败"
 
       - name: Display summary
         if: always()
         run: |
           echo "=== 运行总结 ==="
-          if [ -f py/fofa/IPTV.txt ]; then
-            echo "IPTV.txt 行数: $(wc -l < py/fofa/IPTV.txt)"
-          else
-            echo "IPTV.txt 未生成"
-          fi
-          echo "zubo.txt 是否存在: $(ls py/fofa/zubo.txt 2>/dev/null || echo '已删除/不存在')"
+          [ -f py/fofa/IPTV.txt ] && echo "IPTV.txt 行数: $(wc -l < py/fofa/IPTV.txt)"
+          [ -f py/fofa/IPTV.m3u ] && echo "IPTV.m3u 已生成 ✅" || echo "IPTV.m3u 生成失败 ❌"
