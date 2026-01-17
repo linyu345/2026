@@ -1,8 +1,8 @@
 name: Update hotel.m3u
 
 on:
-  schedule:
-    - cron: '0 16 * * *'    # 每天北京时间 00:00 运行（UTC 16:00）
+#  schedule:
+#    - cron: '0 16 * * *'    # 每天北京时间 00:00 运行（UTC 16:00）
   workflow_dispatch:        # 支持手动触发
 
 jobs:
